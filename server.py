@@ -111,28 +111,71 @@ def load_post(url):
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
+    def allowed_origin(self):
+        origin = self.headers.get('Origin')
+        allowed = os.environ.get('POSTWISE_ALLOWED_ORIGIN','https://postwise-knowledge-portal.shtoa.chatgpt.site')
+        return origin is None or origin == allowed
+    def cors(self):
+        if self.headers.get('Origin') and self.allowed_origin():
+            self.send_header('Access-Control-Allow-Origin',self.headers['Origin'])
+            self.send_header('Vary','Origin')
+            self.send_header('Access-Control-Allow-Private-Network','true')
     def send_json(self, status, value):
         raw = json.dumps(value).encode(); self.send_response(status)
         self.send_header('Content-Type','application/json'); self.send_header('Cache-Control','no-store')
+        self.cors()
         self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
-    def do_GET(self):
-        self.send_json(200 if self.path == '/health' else 404, {'status':'ok'} if self.path == '/health' else {'error':'Not found'})
-    def do_POST(self):
-        if self.path != '/import': return self.send_json(404,{'error':'Not found'})
+    def do_OPTIONS(self):
+        if not self.allowed_origin(): return self.send_json(403,{'error':'Origin not allowed'})
+        self.send_response(204); self.cors()
+        self.send_header('Access-Control-Allow-Methods','POST, GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers','Authorization, Content-Type')
+        self.end_headers()
+    def authorized(self):
         token = os.environ.get('POSTWISE_IMPORT_TOKEN','')
-        if not token or not hmac.compare_digest(self.headers.get('Authorization',''),'Bearer '+token):
-            return self.send_json(401,{'error':'Unauthorized'})
-        size = int(self.headers.get('Content-Length','0'))
-        if size <= 0 or size > 4096: return self.send_json(413,{'error':'Request too large'})
-        if not LOCK.acquire(blocking=False): return self.send_json(429,{'error':'Importer busy. Retry after the current import completes.'})
+        return bool(token) and hmac.compare_digest(self.headers.get('Authorization',''),'Bearer '+token)
+    def do_GET(self):
+        if not self.allowed_origin(): return self.send_json(403,{'error':'Origin not allowed'})
+        if self.path == '/health': return self.send_json(200,{'status':'ok','service':'postwise-compute'})
+        self.send_json(404,{'error':'Not found'})
+    def do_POST(self):
+        paths = ('/import','/connect','/models','/analyze','/graph/build','/graph/query')
+        if self.path not in paths: return self.send_json(404,{'error':'Not found'})
+        if not self.allowed_origin(): return self.send_json(403,{'error':'Origin not allowed'})
+        if not self.authorized(): return self.send_json(401,{'error':'Unauthorized'})
+        try: size = int(self.headers.get('Content-Length','0'))
+        except ValueError: return self.send_json(400,{'error':'Invalid content length'})
+        limit = 4096 if self.path in ('/import','/connect','/models') else 20_000_000
+        if size <= 0 or size > limit: return self.send_json(413,{'error':'Request too large'})
+        if not LOCK.acquire(blocking=False): return self.send_json(429,{'error':'Compute service busy. Wait for the current operation.'})
         try:
-            payload = json.loads(self.rfile.read(size)); shortcode(payload.get('url',''))
-            self.send_json(200,load_post(payload['url']))
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload,dict): raise ValueError('Expected a JSON object')
+            if self.path == '/connect':
+                import importlib.util
+                result={'connected':True,'graphifyInstalled':bool(importlib.util.find_spec('graphify')),'localAI':'Ollama optional','mode':'local' if os.environ.get('HOST')=='127.0.0.1' else 'hosted'}
+            elif self.path == '/models':
+                from local_ai import models
+                result=models()
+            elif self.path == '/analyze':
+                from local_ai import analyze
+                result=analyze(payload)
+            elif self.path == '/graph/build':
+                from knowledge_graph import build_graph
+                result=build_graph(payload.get('notes'))
+            elif self.path == '/graph/query':
+                from knowledge_graph import query_graph
+                result=query_graph(payload.get('graph',{}),payload.get('query',''),payload.get('start'),payload.get('end'))
+            else:
+                shortcode(payload.get('url',''));result=load_post(payload['url'])
+            self.send_json(200,result)
+        except ModuleNotFoundError as e:
+            self.send_json(503,{'error':'Optional dependency unavailable: '+str(e.name)+'. Install the documented dependency group on this compute host.'})
         except ValueError as e: self.send_json(400,{'error':str(e)})
         except Exception:
-            self.send_json(502,{'error':'Instagram retrieval failed. A valid session may be required, or Instagram may be limiting access. No automatic retries were made.'})
+            self.send_json(502,{'error':'Processing failed. For Instagram, a valid session may be required or access may be limited. For local AI, check Ollama is running and the model supports the source inputs.'})
         finally: LOCK.release()
 
 if __name__ == '__main__':
     if not os.environ.get('POSTWISE_IMPORT_TOKEN'): raise SystemExit('Set POSTWISE_IMPORT_TOKEN before starting.')
-    ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','8080'))),Handler).serve_forever()
+    ThreadingHTTPServer((os.environ.get('HOST','0.0.0.0'),int(os.environ.get('PORT','8080'))),Handler).serve_forever()

@@ -7,3 +7,6 @@ __pycache__/
 *.wav
 *.jpg
 *.png
+
+.venv/
+.pytest_cache/
