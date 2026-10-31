@@ -8,12 +8,12 @@ video frames and 30-second WAV audio chunks with FFmpeg. Videos have a combined
 ## Deployment
 
 Deploy this directory's Dockerfile to a Python/container host with HTTPS and a
-request timeout of at least 180 seconds. The existing Sites Worker cannot run this
+request timeout of at least 240 seconds. The existing Sites Worker cannot run this
 Python process. Do not deploy this directory as the Sites Worker build.
 
 Set a strong random POSTWISE_IMPORT_TOKEN secret on the container host. No token
 is included in this repository. Optional: IG_USERNAME and IG_SESSION_FILE may point
-to a server-mounted Instaloader session file created by the account owner. Do not
+to a server-mounted Instaloader session file created by login_local.py on the compute host (private JSON, never pickle). Do not
 commit sessions or passwords. The service does not accept login credentials.
 
 Configure these production secrets on the existing Postwise Site:
@@ -35,26 +35,32 @@ GET /health reports liveness. POST /import accepts {"url":"https://www.instagram
 and Authorization: Bearer <token>. Configure the host for one replica or an upstream
 rate limit. No unattended import schedule is configured.
 
-## Render Free setup
-
-1. In Render choose **New → Web Service**.
-2. Select **shopend/postwise-downloader**. If it is missing, grant Render access to this specific private repository.
-3. Set **Language: Docker**, **Branch: main**, **Root Directory: leave blank**, **Dockerfile Path: ./Dockerfile**, **Instance Type: Free**.
-4. Add the secret environment variable **POSTWISE_IMPORT_TOKEN** with a strong random value. Set **Health Check Path: /health**.
-5. Deploy. After the service is live, configure its HTTPS address and the matching token on Postwise. Do not put secrets in this repository or chat.
-
-Alternatively, use the included `render.yaml` Blueprint; it selects the Free plan and generates the importer token.
-
-Render Free sleeps after inactivity and has limited CPU, RAM, bandwidth and build minutes. Start with short clips. Instagram access is not guaranteed: cloud IPs may be rate limited or login may be required. Local extraction tests used sample media; a live Instagram import has not yet been verified.
-
-
 ## Local computing without Render
 
 The website can call a Python service on your own computer. It binds only to
 127.0.0.1:8765 and accepts browser requests only from the configured Postwise
 origin. A fresh session token is generated each launch; it is not saved.
 
-### macOS / Linux
+### macOS quick start
+
+1. Download this private repository using GitHub **Code → Download ZIP** and unzip it.
+2. Install Python 3.10+ and FFmpeg if missing. The launcher prints instructions if needed.
+3. In Terminal, open the unzipped folder and run `bash Start-Postwise.command`.
+4. The portal opens. Choose **This computer**, paste the fresh token printed in Terminal,
+   then click **Connect this computer** and paste an Instagram URL.
+
+The launcher installs the pinned Instagram dependencies into `.venv` in this folder.
+It does not install Graphify. It does not change global Python packages or create
+an unattended background service. Close Terminal to stop computing.
+
+If Instagram requires login, stop the service and run
+`bash Start-Postwise.command --login`, then start it again. Password and 2FA code
+are entered only in your local Terminal and sent to Instagram, never Postwise.
+The resulting JSON cookies are saved with owner-only permissions in
+`~/.postwise/instagram-session.json`. Delete that file to remove the local session;
+revoke the Instagram session separately if needed. Do not import session files from others.
+
+### macOS / Linux manual setup
 
 1. Install Python 3.10+ and FFmpeg using your system package manager.
 2. Clone this private repository and open a terminal in it.
@@ -125,3 +131,22 @@ This initial local adapter accepts at most 20 images and requires a pasted or
 previously generated transcript for speech. It does not transcribe audio itself.
 Generated notes are validated against the common teaching-note format. No
 automatic fallback to a remote provider is performed.
+
+## Security boundaries
+
+Media downloads use a separate anonymous HTTP session, explicit redirect validation,
+HTTPS/CDN host allowlisting, public DNS address checks, disabled environment proxies,
+HTTP status validation, a 60-second transfer deadline and per-file limits. Imports
+have a 300 MB aggregate download limit and run in a separate process with a hard
+210-second deadline; its process group and temporary files are cleaned up on exit.
+FFmpeg is restricted to local file/pipe protocols, one decoding thread and a
+45-second command timeout and a media-format allowlist. The worker has CPU and file-size OS limits. These are
+resource controls, not a full OS sandbox; keep FFmpeg and your OS updated.
+
+Local serving is forced to loopback. Browser Origin, Host and bearer token checks
+protect the API, and socket reads time out. Login sessions are restricted JSON,
+not executable pickle. Runtime dependencies, including transitive dependencies, are pinned. A pip-audit
+scan on 2026-10-31 reported no known vulnerabilities for this requirements file.
+This does not guarantee the absence of undisclosed vulnerabilities. CDN DNS checks are defense in depth,
+not a guarantee against every DNS rebinding scenario. Internet access is still
+required for Instagram and retrieval can be blocked or require authentication.

@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 import secrets
 
-os.environ.setdefault('HOST','127.0.0.1')
+os.umask(0o077)
+os.environ['HOST']='127.0.0.1'
 os.environ.setdefault('PORT','8765')
 os.environ.setdefault('POSTWISE_ALLOWED_ORIGIN','https://postwise-knowledge-portal.shtoa.chatgpt.site')
 # A session-only token: never stored in source, browser storage or a settings file.
@@ -12,5 +13,10 @@ print('\nPostwise local compute: http://127.0.0.1:'+os.environ['PORT'],flush=Tru
 print('Paste this session token into Postwise → This computer:',flush=True)
 print(os.environ['POSTWISE_IMPORT_TOKEN'],flush=True)
 print('Keep this terminal open. Closing it stops the service.\n',flush=True)
+session = Path.home()/'.postwise'/'instagram-session.json'
+if session.exists():
+    import json
+    os.environ['IG_USERNAME'] = json.loads(session.read_text())['username']
+    os.environ['IG_SESSION_FILE'] = str(session)
 from server import Handler, ThreadingHTTPServer
 ThreadingHTTPServer((os.environ['HOST'],int(os.environ['PORT'])),Handler).serve_forever()
