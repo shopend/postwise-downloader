@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: postwise-downloader
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: POSTWISE_IMPORT_TOKEN
+        generateValue: true
